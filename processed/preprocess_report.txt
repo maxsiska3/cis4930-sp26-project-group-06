@@ -1,0 +1,43 @@
+Loaded train (175341, 44), test (82332, 44) (after dropping 'id').
+
+--- Duplicate / contamination checks ---
+train: 67,601 exact duplicate rows (38.55%).
+  duplicates by family: Generic=35819, Exploits=13549, DoS=8458, Normal=4110, Reconnaissance=2969, Fuzzers=2034, Analysis=406, Backdoor=211, Shellcode=42, Worms=3
+  -> dropped; train now has 107,740 rows.
+test: 26,387 exact duplicate rows (32.05%).
+  duplicates by family: Generic=15214, Exploits=3523, Normal=2794, DoS=2371, Fuzzers=1224, Reconnaissance=793, Backdoor=237, Analysis=231
+  -> dropped; test now has 55,945 rows.
+train/test overlap: 2,030 test rows (3.63%) also appear in the training partition.
+  overlap by family: Normal=540, Reconnaissance=426, Generic=264, DoS=237, Exploits=218, Fuzzers=213, Analysis=118, Shellcode=13, Backdoor=1
+  -> kept (pass --drop-overlap to remove them from the test set).
+
+train class distribution (107,740 rows):
+  Normal            51,890  48.162%
+  Fuzzers           16,150  14.990%
+  Analysis           1,594   1.479%
+  Backdoor           1,535   1.425%
+  DoS                3,806   3.533%
+  Exploits          19,844  18.418%
+  Generic            4,181   3.881%
+  Reconnaissance     7,522   6.982%
+  Shellcode          1,091   1.013%
+  Worms                127   0.118%
+test class distribution (55,945 rows):
+  Normal            34,206  61.142%
+  Fuzzers            4,838   8.648%
+  Analysis             446   0.797%
+  Backdoor             346   0.618%
+  DoS                1,718   3.071%
+  Exploits           7,609  13.601%
+  Generic            3,657   6.537%
+  Reconnaissance     2,703   4.832%
+  Shellcode            378   0.676%
+  Worms                 44   0.079%
+
+--- Transform summary ---
+protocols kept (>= 1000 train rows): ['tcp', 'udp', 'unas']; rest -> 'other'
+log1p applied to 15 columns: ['dur', 'spkts', 'dpkts', 'sbytes', 'dbytes', 'rate', 'sload', 'dload', 'sinpkt', 'dinpkt', 'sjit', 'djit', 'smean', 'dmean', 'response_body_len']
+final feature count: 65
+service categories: ['dhcp', 'dns', 'ftp', 'ftp-data', 'http', 'irc', 'no_service', 'pop3', 'radius', 'smtp', 'snmp', 'ssh', 'ssl']
+state categories: ['con', 'eco', 'fin', 'int', 'no', 'par', 'req', 'rst', 'urn']
+features are NOT standardized; make_pipeline() scales inside each fold.
