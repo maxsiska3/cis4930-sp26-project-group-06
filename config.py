@@ -57,10 +57,10 @@ SMOTE_K = 5   # neighbors for SMOTE/ADASYN
 
 # E2: keep this fraction of each rare family's original training records.
 # Worms only has ~130 training records, so the smallest levels round to
-# almost nothing. E2 keeps at least MIN_RARE_RECORDS so SMOTE can still run
-# (SMOTE needs at least SMOTE_K + 1 records of a class).
+# almost nothing. E2 rounds half up with a minimum of one record and records
+# unsupported fixed-k resampling configurations rather than changing the size.
 SUBSAMPLE_LEVELS = [0.05, 0.01, 0.005, 0.001]
-MIN_RARE_RECORDS = SMOTE_K + 1
+MIN_RARE_RECORDS = SMOTE_K + 1  # resampling requirement, not E2's sampling floor
 
 # False alarms are reported per this many normal connections
 FALSE_ALARM_SCALE = 100_000
