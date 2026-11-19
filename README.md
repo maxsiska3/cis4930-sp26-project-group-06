@@ -9,6 +9,92 @@ Use `--processed` only for exploratory runs with E3 processed CSVs. See
 validation protocol, commands, and result files. Install `requirements.txt` and
 run `python -m unittest -v test_e2 test_evaluate` to verify the implementation.
 
+## E6: significance tests
+
+E6 compares each balancing treatment with `none` on matching E1 CV folds using
+two-sided Wilcoxon signed-rank tests with Holm adjustment. It reads saved
+training-side results, performs no training, and never opens the official test
+partition.
+
+```bash
+python -m pip install -r requirements-e6.txt
+python run_e6.py --input-dir results/e1_final --out-dir results/e6
+```
+
+Replace `results/e1_final` with your completed E1 output directory. It must
+contain `manifest.json`, `split_plan.json`, `fold_results.csv`, and
+`checkpoints/*.json`. E6 checks experiment metadata, outer split memberships,
+and exported metrics against checkpoint records. It does not recompute metrics
+from predictions. The dependency file includes E1 requirements and SciPy 1.13+
+for permutation-backed Wilcoxon tests.
+
+By default, E6 analyzes both binary and multiclass tasks, all four classifiers,
+and every valid treatment against `none`, including focal loss for MLP and
+XGBoost. The three default metrics produce 132 planned hypotheses:
+
+- `rare_family_macro_recall`: mean detection recall across the four rare families.
+- `macro_f1`: binary macro-F1 for binary training; family-classification macro-F1
+  for multiclass training. Tasks are analyzed separately.
+- `false_positives_per_100k_normal`: false-alarm cost in its original units.
+
+Use `--tasks`, `--classifiers`, `--methods`, and `--metrics` to specify a
+preselected analysis. The baseline is included automatically. For example:
+
+```bash
+python run_e6.py --input-dir results/e1_final --out-dir results/e6_rare \
+  --tasks multiclass --classifiers decision_tree random_forest \
+  --methods class_weights smote \
+  --metrics recall_Worms recall_Shellcode recall_Backdoor recall_Analysis \
+  detection_macro_f1 false_positives_per_100k_normal
+```
+
+Each comparison requires every expected baseline/treatment fold to succeed,
+with matching fold IDs and split sizes and finite metric values. Missing,
+failed, misaligned, or undefined pairs make the comparison unavailable; folds
+are never silently dropped. Mixed datasets/protocols and duplicate observations
+are rejected. Older E1 tables can obtain missing `inner_splits` metadata from
+their matching manifest; archived source hashes remain part of the provenance.
+E2 seeds and E3 held-out families are not treated as E1 fold replicates.
+
+Differences are **treatment minus baseline**: positive recall/F1 deltas are gains,
+while positive false-alarm deltas are costs. A recall delta of 0.01 means one
+percentage point. Differences are rounded to 12 decimals before ranking; zeros
+are excluded from the test but retained in descriptive results. All-zero
+differences receive p=1. Sign permutations are exhaustive for up to 16 nonzero
+pairs; larger inputs use 65,535 permutations with the experiment seed. Holm
+adjustment covers all selected task/classifier/treatment/metric combinations,
+including unavailable planned comparisons. Choose the analysis and alpha before
+inspecting p-values.
+
+**Statistical limits:** with five nonzero pairs, the minimum exact two-sided
+Wilcoxon p-value is **0.0625**, so five-fold results cannot reach alpha 0.05 even
+before Holm adjustment. CV training sets also overlap, violating the independent
+paired-differences assumption; inference is exploratory. Report effect sizes and
+consistency, and do not interpret nonsignificance as equivalence or pool other
+experiments to obtain significance. See the
+[SciPy Wilcoxon documentation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.wilcoxon.html)
+for assumptions and tie/zero handling.
+
+Outputs in the selected directory:
+
+- `comparisons.csv`: available/unavailable hypotheses, effect sizes, raw and
+  Holm-adjusted p-values, and significance flags.
+- `paired_differences.csv`: matched fold values and differences used in tests.
+- `E6_SUMMARY.md`: comparison counts, interpretation, and limitations.
+- `manifest.json`: analysis plan, E1 provenance, input/source hashes, and versions.
+
+E6 refuses to overwrite a nonempty output directory. Exit code 0 means every
+planned comparison was available, regardless of significance; 1 means some were
+unavailable; 2 means invalid inputs or conflicting outputs. Baseline-only E1
+results cannot support comparisons—complete treatment runs first. E6 never
+launches that sweep.
+
+Run the synthetic checks, including native E1-to-E6 integration, with:
+
+```bash
+python -m unittest -v test_e6
+```
+
 ## Shared scoring
 
 `evaluate.py` requires NumPy, pandas, and scikit-learn. It also requires
