@@ -113,6 +113,11 @@ class E5Tests(unittest.TestCase):
                 self.assertEqual(list(families.family), FAMILIES)
                 self.assertAlmostEqual(imp.importance.sum(), 1.0, places=6)
                 self.assertGreaterEqual(summary["surrogate_fidelity"], 0.9)
+                self.assertGreaterEqual(summary["surrogate_rare_fidelity"], 0.9)
+                fidelity = families.surrogate_fidelity.dropna()
+                self.assertTrue(((fidelity >= 0) & (fidelity <= 1)).all())
+                if classifier == "decision_tree":   # rules come from the model itself
+                    self.assertTrue((families.surrogate_fidelity == 1.0).all())
                 self.assertGreater(summary["rare_detection_recall"], 0.9)
                 self.assertIn("Worms: top leaf rules", text)
                 self.assertTrue(all(r["family"] in FAMILIES for r in rules))

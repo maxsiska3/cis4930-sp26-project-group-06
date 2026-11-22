@@ -14,8 +14,8 @@ official training partition. We then compare, before and after resampling:
                           only by synthetic (SMOTE/ADASYN) records
 
 The Random Forest has 200 deep trees, so its readable rules come from a
-surrogate tree (64 leaves) fitted to the forest's predictions on the real training data;
-its fidelity (agreement with the forest on the test set) is reported.
+surrogate tree (256 leaves) fitted to the forest's predictions on the real training data;
+its fidelity (agreement with the forest on the test set, overall and per family) is reported.
 
 Detection uses 1 - P(Normal) with a threshold chosen on out-of-fold training
 predictions (maximum attack F1, as in E2/E4). Test labels never choose
@@ -49,7 +49,7 @@ METHODS = [m for m in IMBALANCE_METHODS if m != "focal_loss"]
 FAMILIES = ["Normal"] + ATTACK_FAMILIES
 RULE_FAMILIES = RARE_FAMILIES + ["Fuzzers"]   # rare families + the one E3/E4 miss
 KEY = ["classifier", "method"]
-SURROGATE_LEAVES = 64   # size of the readable stand-in for the forest
+SURROGATE_LEAVES = 256  # size of the readable stand-in for the forest (see E5_WRITEUP.md)
 TOP_LEVELS = 3          # depth of the "top of the tree" printout
 TOP_RULES = 5           # leaf rules printed per family
 ONE_HOT_PREFIXES = tuple(f"{c}_" for c in CATEGORICAL_COLUMNS)
@@ -220,13 +220,23 @@ def boundary_stats(model, test_X, test_codes):
 def surrogate(model):
     """Small tree imitating the forest on the real training rows.
 
-    Grown best-first to SURROGATE_LEAVES leaves with balanced class weights, so
-    the rare families get leaves of their own instead of being absorbed by the
-    large families.
+    Grown best-first to SURROGATE_LEAVES leaves without class weights. Balanced
+    weights were tried first: they gave the rare families more leaves but cut
+    test agreement with the forest from 0.85 to 0.73 (no balancing, 256 leaves),
+    so fidelity is instead reported per family (`surrogate_fidelity` in
+    e5_families.csv).
     """
     labels = model.clf.predict(model.X_scaled)
-    return DecisionTreeClassifier(max_leaf_nodes=SURROGATE_LEAVES, class_weight="balanced",
+    return DecisionTreeClassifier(max_leaf_nodes=SURROGATE_LEAVES,
                                   random_state=SEED).fit(model.X_scaled, labels)
+
+
+def family_fidelity(readable, forest, test_X):
+    """Per family: share of test rows the forest assigns to it that the surrogate also does."""
+    want, got = forest.predict(test_X).astype(int), readable.predict(test_X).astype(int)
+    hits = np.bincount(want[want == got], minlength=len(FAMILIES))
+    total = np.bincount(want, minlength=len(FAMILIES))
+    return np.divide(hits, total, out=np.full(len(FAMILIES), np.nan), where=total > 0)
 
 
 def family_rules(model, tree, test_X, test_codes, classifier, method):
@@ -283,16 +293,20 @@ def run_config(train, test, classifier, method, raw):
     families.loc["Normal", "classification_precision"] = multi.per_class.loc["Normal", "precision"]
     families.loc["Normal", "classification_recall"] = multi.per_class.loc["Normal", "recall"]
     families["test_support"] = np.bincount(test_codes, minlength=len(FAMILIES))
-    families = families.reset_index().assign(classifier=classifier, method=method)
 
     if hasattr(model.clf, "estimators_"):
         readable = surrogate(model)
         fidelity = float((readable.predict(test_X) == model.clf.predict(test_X)).mean())
+        families["surrogate_fidelity"] = family_fidelity(readable, model.clf, test_X)
         depths = [t.get_depth() for t in model.clf.estimators_]
         n_leaves = [t.get_n_leaves() for t in model.clf.estimators_]
     else:
         readable, fidelity = model.clf, 1.0
+        families["surrogate_fidelity"] = 1.0
         depths, n_leaves = [model.clf.get_depth()], [model.clf.get_n_leaves()]
+    rare_fidelity = float(families.loc[RARE_FAMILIES, "surrogate_fidelity"].mean())
+    per_family_fidelity = families.surrogate_fidelity.copy()
+    families = families.reset_index().assign(classifier=classifier, method=method)
     rules = family_rules(model, readable, test_X, test_codes, classifier, method)
 
     rare = binary.per_family.loc[RARE_FAMILIES]
@@ -305,6 +319,7 @@ def run_config(train, test, classifier, method, raw):
                "mean_leaves_per_tree": float(np.mean(n_leaves)), "mean_depth": float(np.mean(depths)),
                "rules_from": "surrogate" if readable is not model.clf else "model",
                "surrogate_fidelity": fidelity,
+               "surrogate_rare_fidelity": rare_fidelity,
                "seconds": round(time.monotonic() - start, 1)}
 
     title = f"{classifier}, {method}"
@@ -317,7 +332,9 @@ def run_config(train, test, classifier, method, raw):
             f"rules read from: {source}", "",
             f"Top {TOP_LEVELS} levels (thresholds in original units):", top_of_tree(model, readable), ""]
     for family in RULE_FAMILIES:
-        text.append(f"{family}: top leaf rules by real training support")
+        note = (f" (surrogate agrees with the forest on {per_family_fidelity[family]:.2f} of test rows "
+                f"the forest assigns to {family})") if readable is not model.clf else ""
+        text.append(f"{family}: top leaf rules by real training support{note}")
         mine = [r for r in rules if r["family"] == family]
         if not mine:
             text.append("    (no leaf predicts this family)")
@@ -391,7 +408,8 @@ def plot_synthetic(families, fig_dir):
         share=lambda d: np.divide(d.synthetic_only_leaves, d.leaves,
                                   out=np.zeros(len(d)), where=d.leaves > 0))
     classifiers = [c for c in CLASSIFIERS if c in set(families.classifier)]
-    fig, axes = plt.subplots(1, len(classifiers), figsize=(6.2 * len(classifiers), 4.6), squeeze=False)
+    fig, axes = plt.subplots(1, len(classifiers), figsize=(7.0 * len(classifiers), 4.6), squeeze=False)
+    fig.subplots_adjust(wspace=0.45)   # room for the second panel's family labels
     for ax, classifier in zip(axes[0], classifiers):
         part = families[families.classifier == classifier]
         methods = [m for m in METHODS if m in set(part.method)]
@@ -449,7 +467,7 @@ def run(args):
             if (classifier, method) in done:
                 continue
             summary, families, imp, rules, text = run_config(train, test, classifier, method, args.raw)
-            (out / "e5_rules" / f"{classifier}_{method}.txt").write_text(text + "\n")
+            (out / "e5_rules" / f"{classifier}_{method}.txt").write_text(text + "\n", encoding="utf-8")
             for name, table in (("families", families), ("importances", imp),
                                 ("rules", pd.DataFrame(rules)), ("summary", pd.DataFrame([summary]))):
                 if table.empty:
